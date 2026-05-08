@@ -47,7 +47,6 @@ A port of [Moonlight Stream](https://moonlight-stream.org/) for playing games us
 
 ## What does NOT work
 
-- Hardware Mouse (UWP limitations sadly)
 - Everything else not listed above
 
 ## Building
