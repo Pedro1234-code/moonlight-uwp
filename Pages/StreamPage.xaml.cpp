@@ -47,6 +47,7 @@ StreamPage::StreamPage():
 	m_mouseInputRegistered(false),
 	m_mouseMovedRegistered(false),
 	m_corePointerHandlersRegistered(false),
+	m_panelPointerHandlersRegistered(false),
 	m_mouseCaptureActive(false),
 	m_mouseCursorHidden(false),
 	m_mouseCaptureSuspended(false),
@@ -202,6 +203,35 @@ void StreamPage::RegisterMouseInput()
 		m_corePointerHandlersRegistered = true;
 	}
 
+
+	if (swapChainPanel != nullptr) {
+		panelPointerMovedHandler = swapChainPanel->PointerMoved +=
+			ref new TypedEventHandler<Platform::Object^, PointerRoutedEventArgs^>([this](Platform::Object^ sender, PointerRoutedEventArgs^ args) {
+				if (args != nullptr && HandlePointerMoved(args->GetCurrentPoint(swapChainPanel))) args->Handled = true;
+			});
+		panelPointerPressedHandler = swapChainPanel->PointerPressed +=
+			ref new TypedEventHandler<Platform::Object^, PointerRoutedEventArgs^>([this](Platform::Object^ sender, PointerRoutedEventArgs^ args) {
+				if (args != nullptr && HandlePointerPressed(args->GetCurrentPoint(swapChainPanel))) args->Handled = true;
+			});
+		panelPointerReleasedHandler = swapChainPanel->PointerReleased +=
+			ref new TypedEventHandler<Platform::Object^, PointerRoutedEventArgs^>([this](Platform::Object^ sender, PointerRoutedEventArgs^ args) {
+				if (args != nullptr && HandlePointerReleased(args->GetCurrentPoint(swapChainPanel))) args->Handled = true;
+			});
+		panelPointerExitedHandler = swapChainPanel->PointerExited +=
+			ref new TypedEventHandler<Platform::Object^, PointerRoutedEventArgs^>([this](Platform::Object^ sender, PointerRoutedEventArgs^ args) {
+				if (args != nullptr && HandlePointerExited(args->GetCurrentPoint(swapChainPanel))) args->Handled = true;
+			});
+		panelPointerCaptureLostHandler = swapChainPanel->PointerCaptureLost +=
+			ref new TypedEventHandler<Platform::Object^, PointerRoutedEventArgs^>([this](Platform::Object^ sender, PointerRoutedEventArgs^ args) {
+				if (args != nullptr && HandlePointerCaptureLost(args->GetCurrentPoint(swapChainPanel))) args->Handled = true;
+			});
+		panelPointerWheelChangedHandler = swapChainPanel->PointerWheelChanged +=
+			ref new TypedEventHandler<Platform::Object^, PointerRoutedEventArgs^>([this](Platform::Object^ sender, PointerRoutedEventArgs^ args) {
+				if (args != nullptr && HandlePointerWheelChanged(args->GetCurrentPoint(swapChainPanel))) args->Handled = true;
+			});
+		m_panelPointerHandlersRegistered = true;
+	}
+
 	m_mouseInputRegistered = true;
 }
 
@@ -227,6 +257,15 @@ void StreamPage::UnregisterMouseInput()
 		window->PointerWheelChanged -= pointerWheelChangedHandler;
 	}
 	m_corePointerHandlersRegistered = false;
+	if (m_panelPointerHandlersRegistered && swapChainPanel != nullptr) {
+		swapChainPanel->PointerMoved -= panelPointerMovedHandler;
+		swapChainPanel->PointerPressed -= panelPointerPressedHandler;
+		swapChainPanel->PointerReleased -= panelPointerReleasedHandler;
+		swapChainPanel->PointerExited -= panelPointerExitedHandler;
+		swapChainPanel->PointerCaptureLost -= panelPointerCaptureLostHandler;
+		swapChainPanel->PointerWheelChanged -= panelPointerWheelChangedHandler;
+	}
+	m_panelPointerHandlersRegistered = false;
 
 	m_mouseInputRegistered = false;
 	m_mouseCaptureSuspended = false;

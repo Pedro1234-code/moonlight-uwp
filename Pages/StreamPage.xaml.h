@@ -168,12 +168,14 @@ namespace moonlight_xbox_dx
 		bool m_mouseInputRegistered;
 		bool m_mouseMovedRegistered;
 		bool m_corePointerHandlersRegistered;
+		bool m_panelPointerHandlersRegistered;
 		bool m_mouseCaptureActive;
 		bool m_mouseCursorHidden;
 		bool m_mouseCaptureSuspended;
 		unsigned int m_mouseButtons;
 		Windows::Foundation::EventRegistrationToken mouseMovedHandler;
 		Windows::Foundation::EventRegistrationToken pointerMovedHandler, pointerPressedHandler, pointerReleasedHandler, pointerExitedHandler, pointerCaptureLostHandler, pointerWheelChangedHandler;
+		Windows::Foundation::EventRegistrationToken panelPointerMovedHandler, panelPointerPressedHandler, panelPointerReleasedHandler, panelPointerExitedHandler, panelPointerCaptureLostHandler, panelPointerWheelChangedHandler;
 		void Keyboard_OnKeyDown(moonlight_xbox_dx::KeyboardControl^ sender, moonlight_xbox_dx::KeyEvent^ e);
 		void Keyboard_OnKeyUp(moonlight_xbox_dx::KeyboardControl^ sender, moonlight_xbox_dx::KeyEvent^ e);
 		void guideButtonShort_Click(Platform::Object^ sender, Windows::UI::Xaml::RoutedEventArgs^ e);
