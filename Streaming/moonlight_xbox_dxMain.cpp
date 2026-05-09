@@ -793,6 +793,35 @@ void moonlight_xbox_dxMain::OnKeyUp(unsigned short virtualKey, char modifiers) {
 	moonlightClient->KeyUp(virtualKey, modifiers);
 }
 
+void moonlight_xbox_dxMain::OnMouseMove(int deltaX, int deltaY) {
+	if (this == nullptr || moonlightClient == nullptr || insideFlyout) return;
+	if (deltaX == 0 && deltaY == 0) return;
+
+	moonlightClient->SendMousePosition((float)std::clamp(deltaX, -32768, 32767),
+	                                   (float)std::clamp(deltaY, -32768, 32767));
+}
+
+void moonlight_xbox_dxMain::OnMouseButtonDown(int button) {
+	if (this == nullptr || moonlightClient == nullptr || insideFlyout) return;
+	moonlightClient->SendMousePressed(button);
+}
+
+void moonlight_xbox_dxMain::OnMouseButtonUp(int button) {
+	if (this == nullptr || moonlightClient == nullptr) return;
+	moonlightClient->SendMouseReleased(button);
+}
+
+void moonlight_xbox_dxMain::OnMouseWheel(int delta, bool horizontal) {
+	if (this == nullptr || moonlightClient == nullptr || insideFlyout) return;
+	if (delta == 0) return;
+
+	if (horizontal) {
+		moonlightClient->SendScrollH((float)std::clamp(delta, -32768, 32767));
+	} else {
+		moonlightClient->SendScroll((float)std::clamp(delta, -32768, 32767));
+	}
+}
+
 void moonlight_xbox_dxMain::SendGuideButton(int duration) {
 	concurrency::create_async([duration, this]() {
 		// We change the state of the fake guide button, which will be included in the regular controller packets

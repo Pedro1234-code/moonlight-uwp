@@ -96,7 +96,7 @@ void Pacer::init(const std::shared_ptr<DX::DeviceResources> &res, int streamFps,
 	std::fill(m_vhistory.begin(), m_vhistory.end(), 0);
 	m_VsyncIntervalQpc = 0;
 	m_LastSyncTarget = 0;
-	m_ewmaVsyncDriftQpc = MsToQpc(0.0001);
+	m_ewmaVsyncDriftQpc = static_cast<double>(MsToQpc(0.0001));
 
 	// Start FrameQueue so it's ready to receive new frames
 	FrameQueue::instance().setHighWaterMark(FRAME_QUEUE_HIGH);
@@ -168,31 +168,33 @@ void Pacer::updateFrameStats() {
 		}
 
 		// If any vsyncs have passed, we can calculate a very accurate interval
-		if (srcPassed && sqtPassed) {
+		if (srcPassed && sqtPassed > 0) {
 			const int64_t intervalQpc = sqtPassed / srcPassed;
 
-			// use average from past 10 intervals
-			if (m_vhcount == VSYNC_HISTORY_SIZE) {
-				m_vhsum -= m_vhistory[m_vhidx];
-			} else {
-				++m_vhcount;
+			if (intervalQpc > 0) {
+				// use average from past 10 intervals
+				if (m_vhcount == VSYNC_HISTORY_SIZE) {
+					m_vhsum -= m_vhistory[m_vhidx];
+				} else {
+					++m_vhcount;
+				}
+				m_vhsum += intervalQpc;
+				m_vhistory[m_vhidx] = intervalQpc;
+				m_vhidx = (m_vhidx + 1) % VSYNC_HISTORY_SIZE;
+
+				// Compute average
+				m_VsyncIntervalQpc = m_vhsum / m_vhcount;
+
+				FQLog("updateFrameStats(): LastSyncQpc %lld, Estimated vsync interval: %.3fms (%.2f Hz) (%lld ticks), "
+				      "driftQpc %lld (%fms), driftAvg %lld\n",
+				      m_LastSyncQpc, QpcToMs(m_VsyncIntervalQpc), 1000.0 / QpcToMs(m_VsyncIntervalQpc), m_VsyncIntervalQpc,
+				      driftQpc, QpcToMs(driftQpc), static_cast<int64_t>(m_ewmaVsyncDriftQpc));
 			}
-			m_vhsum += intervalQpc;
-			m_vhistory[m_vhidx] = intervalQpc;
-			m_vhidx = (m_vhidx + 1) % VSYNC_HISTORY_SIZE;
-
-			// Compute average
-			m_VsyncIntervalQpc = m_vhsum / m_vhcount;
-
-			FQLog("updateFrameStats(): LastSyncQpc %lld, Estimated vsync interval: %.3fms (%.2f Hz) (%lld ticks), "
-			      "driftQpc %lld (%fms), driftAvg %lld\n",
-			      m_LastSyncQpc, QpcToMs(m_VsyncIntervalQpc), 1000.0 / QpcToMs(m_VsyncIntervalQpc), m_VsyncIntervalQpc,
-			      driftQpc, QpcToMs(driftQpc), static_cast<int64_t>(m_ewmaVsyncDriftQpc));
 		}
 	} else {
 		// We have a chicken and the egg problem here in that no frame stats are available before presenting real frames,
 		// so we need to fake some numbers early on so Pacer can at least limp through a few frames.
-		double vsyncRR = m_RefreshRate;
+		double vsyncRR = m_RefreshRate > 0.0 ? m_RefreshRate : 60.0;
 
 		if (IsXbox()) {
 			if (vsyncRR >= 120.0) {
@@ -245,7 +247,7 @@ bool Pacer::renderModeImmediate(std::shared_ptr<VideoRenderer> &sceneRenderer) {
 	}
 
 	// if we're a frame behind, catch up
-	int queueDepth = FrameQueue::instance().count();
+	int queueDepth = static_cast<int>(FrameQueue::instance().count());
 	if (queueDepth > FRAME_QUEUE_LOW) {
 		AVFrame *newFrame2 = FrameQueue::instance().dequeue();
 		if (newFrame2) {
@@ -291,7 +293,7 @@ bool Pacer::renderModeDisplayLocked(std::shared_ptr<VideoRenderer> &sceneRendere
 	int advanceCount = m_FrameCadence.decideAdvanceCount();
 
 	// if the queue has too many frames in it, break the cadence and render or drop one extra
-	int queueDepth = FrameQueue::instance().count();
+	int queueDepth = static_cast<int>(FrameQueue::instance().count());
 	if (queueDepth > FRAME_QUEUE_LOW) {
 		advanceCount++;
 	}
@@ -403,7 +405,7 @@ int64_t Pacer::getNextVBlankQpc(int64_t *now) {
 		interval = m_VsyncIntervalQpc;
 		int64_t next = m_LastSyncQpc + static_cast<int64_t>(m_ewmaVsyncDriftQpc);
 
-		while (next < *now) {
+		while (next <= *now) {
 			next += interval;
 		}
 		target = next;
@@ -423,7 +425,9 @@ int64_t Pacer::getNextVBlankQpc(int64_t *now) {
 		m_FrameCadence.setDisplayHz(1000.0 / QpcToMs(interval));
 	}
 
-	assert(target > *now);
+	if (target <= *now) {
+		target = *now + (interval > 0 ? interval : MsToQpc(1000.0 / 60.0));
+	}
 
 	return target;
 }

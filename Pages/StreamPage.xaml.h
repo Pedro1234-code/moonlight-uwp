@@ -135,6 +135,21 @@ namespace moonlight_xbox_dx
 	    void Page_Unloaded(Platform::Object ^ sender, Windows::UI::Xaml::RoutedEventArgs ^ e);
 
 		void OnSwapChainPanelSizeChanged(Object^ sender, Windows::UI::Xaml::SizeChangedEventArgs^ e);
+		void RegisterMouseInput();
+		void UnregisterMouseInput();
+		void CaptureMouseInput();
+		void ReleaseMouseInputCapture();
+		void OnMouseMoved(Windows::Devices::Input::MouseDevice^ sender, Windows::Devices::Input::MouseEventArgs^ args);
+		bool HandlePointerMoved(Windows::UI::Input::PointerPoint^ point);
+		bool HandlePointerPressed(Windows::UI::Input::PointerPoint^ point);
+		bool HandlePointerReleased(Windows::UI::Input::PointerPoint^ point);
+		bool HandlePointerExited(Windows::UI::Input::PointerPoint^ point);
+		bool HandlePointerCaptureLost(Windows::UI::Input::PointerPoint^ point);
+		bool HandlePointerWheelChanged(Windows::UI::Input::PointerPoint^ point);
+		bool IsMousePointer(Windows::UI::Input::PointerPoint^ point);
+		unsigned int GetMouseButtonMask(Windows::UI::Input::PointerPoint^ point);
+		void UpdateMouseButtonState(Windows::UI::Input::PointerPoint^ point);
+		void ReleaseMouseButtons();
 		void flyoutButton_Click(Platform::Object^ sender, Windows::UI::Xaml::RoutedEventArgs^ e);
 		void ActionsFlyout_Closed(Platform::Object^ sender, Platform::Object^ e);
 		void toggleMouseButton_Click(Platform::Object^ sender, Windows::UI::Xaml::RoutedEventArgs^ e);
@@ -150,6 +165,15 @@ namespace moonlight_xbox_dx
 		void OnKeyUp(Windows::UI::Core::CoreWindow^ sender, Windows::UI::Core::KeyEventArgs^ args);
 		void disconnectAndCloseButton_Click(Platform::Object^ sender, Windows::UI::Xaml::RoutedEventArgs^ e);
 		Windows::Foundation::EventRegistrationToken keyDownHandler, keyUpHandler;
+		bool m_mouseInputRegistered;
+		bool m_mouseMovedRegistered;
+		bool m_corePointerHandlersRegistered;
+		bool m_mouseCaptureActive;
+		bool m_mouseCursorHidden;
+		bool m_mouseCaptureSuspended;
+		unsigned int m_mouseButtons;
+		Windows::Foundation::EventRegistrationToken mouseMovedHandler;
+		Windows::Foundation::EventRegistrationToken pointerMovedHandler, pointerPressedHandler, pointerReleasedHandler, pointerExitedHandler, pointerCaptureLostHandler, pointerWheelChangedHandler;
 		void Keyboard_OnKeyDown(moonlight_xbox_dx::KeyboardControl^ sender, moonlight_xbox_dx::KeyEvent^ e);
 		void Keyboard_OnKeyUp(moonlight_xbox_dx::KeyboardControl^ sender, moonlight_xbox_dx::KeyEvent^ e);
 		void guideButtonShort_Click(Platform::Object^ sender, Windows::UI::Xaml::RoutedEventArgs^ e);

@@ -16,6 +16,7 @@ using namespace Platform;
 using namespace Platform::Collections;
 using namespace Windows::Foundation;
 using namespace Windows::Foundation::Collections;
+using namespace Windows::Devices::Input;
 using namespace Windows::Gaming::Input;
 using namespace Windows::Graphics::Display;
 using namespace Windows::System::Threading;
@@ -32,9 +33,24 @@ using namespace Windows::UI::Xaml::Media;
 using namespace Windows::UI::Xaml::Navigation;
 using namespace concurrency;
 
+namespace {
+	const unsigned int MouseButtonLeftMask = 1u << 0;
+	const unsigned int MouseButtonMiddleMask = 1u << 1;
+	const unsigned int MouseButtonRightMask = 1u << 2;
+	const unsigned int MouseButtonX1Mask = 1u << 3;
+	const unsigned int MouseButtonX2Mask = 1u << 4;
+}
+
 StreamPage::StreamPage():
 	m_windowVisible(true),
-	m_coreInput(nullptr)
+	m_coreInput(nullptr),
+	m_mouseInputRegistered(false),
+	m_mouseMovedRegistered(false),
+	m_corePointerHandlersRegistered(false),
+	m_mouseCaptureActive(false),
+	m_mouseCursorHidden(false),
+	m_mouseCaptureSuspended(false),
+	m_mouseButtons(0)
 {
 	InitializeComponent();
 
@@ -67,6 +83,7 @@ void StreamPage::Page_Loaded(Platform::Object ^ sender, Windows::UI::Xaml::Route
 
 	keyDownHandler = (Windows::UI::Core::CoreWindow::GetForCurrentThread()->KeyDown += ref new Windows::Foundation::TypedEventHandler<Windows::UI::Core::CoreWindow ^, Windows::UI::Core::KeyEventArgs ^>(this, &StreamPage::OnKeyDown));
 	keyUpHandler = (Windows::UI::Core::CoreWindow::GetForCurrentThread()->KeyUp += ref new Windows::Foundation::TypedEventHandler<Windows::UI::Core::CoreWindow ^, Windows::UI::Core::KeyEventArgs ^>(this, &StreamPage::OnKeyUp));
+	RegisterMouseInput();
 
 	// Detect gamepad connection and disconnection events
 	gamepadAddedHandler = Gamepad::GamepadAdded += ref new EventHandler<Gamepad^>(this, &StreamPage::OnGamepadAdded);
@@ -87,6 +104,7 @@ void StreamPage::Page_Loaded(Platform::Object ^ sender, Windows::UI::Xaml::Route
 			that->m_main->CreateDeviceDependentResources();
 			that->m_main->CreateWindowSizeDependentResources();
 			that->m_main->StartRenderLoop();
+			that->CaptureMouseInput();
         } catch (const std::exception &ex) {
 			Utils::Logf("StreamPage::Page_Loaded: Exception when starting stream. Exception: %s", ex.what());
         } catch (const std::string &string) {
@@ -108,6 +126,7 @@ void StreamPage::Page_Unloaded(Platform::Object ^ sender, Windows::UI::Xaml::Rou
 
 	Gamepad::GamepadAdded -= gamepadAddedHandler;
 	Gamepad::GamepadRemoved -= gamepadRemovedHandler;
+	UnregisterMouseInput();
 
 	if (this->m_main) {
 
@@ -143,17 +162,264 @@ void StreamPage::OnSwapChainPanelSizeChanged(Object^ sender, Windows::UI::Xaml::
 	m_main->CreateWindowSizeDependentResources();
 }
 
+void StreamPage::RegisterMouseInput()
+{
+	if (m_mouseInputRegistered) return;
+
+	auto mouseDevice = MouseDevice::GetForCurrentView();
+	if (mouseDevice != nullptr) {
+		mouseMovedHandler = mouseDevice->MouseMoved +=
+			ref new Windows::Foundation::TypedEventHandler<MouseDevice^, MouseEventArgs^>(this, &StreamPage::OnMouseMoved);
+		m_mouseMovedRegistered = true;
+	}
+
+	auto window = CoreWindow::GetForCurrentThread();
+	if (window != nullptr) {
+		pointerMovedHandler = window->PointerMoved +=
+			ref new TypedEventHandler<CoreWindow^, PointerEventArgs^>([this](CoreWindow^ sender, PointerEventArgs^ args) {
+				if (args != nullptr && HandlePointerMoved(args->CurrentPoint)) args->Handled = true;
+			});
+		pointerPressedHandler = window->PointerPressed +=
+			ref new TypedEventHandler<CoreWindow^, PointerEventArgs^>([this](CoreWindow^ sender, PointerEventArgs^ args) {
+				if (args != nullptr && HandlePointerPressed(args->CurrentPoint)) args->Handled = true;
+			});
+		pointerReleasedHandler = window->PointerReleased +=
+			ref new TypedEventHandler<CoreWindow^, PointerEventArgs^>([this](CoreWindow^ sender, PointerEventArgs^ args) {
+				if (args != nullptr && HandlePointerReleased(args->CurrentPoint)) args->Handled = true;
+			});
+		pointerExitedHandler = window->PointerExited +=
+			ref new TypedEventHandler<CoreWindow^, PointerEventArgs^>([this](CoreWindow^ sender, PointerEventArgs^ args) {
+				if (args != nullptr && HandlePointerExited(args->CurrentPoint)) args->Handled = true;
+			});
+		pointerCaptureLostHandler = window->PointerCaptureLost +=
+			ref new TypedEventHandler<CoreWindow^, PointerEventArgs^>([this](CoreWindow^ sender, PointerEventArgs^ args) {
+				if (args != nullptr && HandlePointerCaptureLost(args->CurrentPoint)) args->Handled = true;
+			});
+		pointerWheelChangedHandler = window->PointerWheelChanged +=
+			ref new TypedEventHandler<CoreWindow^, PointerEventArgs^>([this](CoreWindow^ sender, PointerEventArgs^ args) {
+				if (args != nullptr && HandlePointerWheelChanged(args->CurrentPoint)) args->Handled = true;
+			});
+		m_corePointerHandlersRegistered = true;
+	}
+
+	m_mouseInputRegistered = true;
+}
+
+void StreamPage::UnregisterMouseInput()
+{
+	if (!m_mouseInputRegistered) return;
+
+	ReleaseMouseInputCapture();
+
+	auto mouseDevice = MouseDevice::GetForCurrentView();
+	if (m_mouseMovedRegistered && mouseDevice != nullptr) {
+		mouseDevice->MouseMoved -= mouseMovedHandler;
+	}
+	m_mouseMovedRegistered = false;
+
+	auto window = CoreWindow::GetForCurrentThread();
+	if (m_corePointerHandlersRegistered && window != nullptr) {
+		window->PointerMoved -= pointerMovedHandler;
+		window->PointerPressed -= pointerPressedHandler;
+		window->PointerReleased -= pointerReleasedHandler;
+		window->PointerExited -= pointerExitedHandler;
+		window->PointerCaptureLost -= pointerCaptureLostHandler;
+		window->PointerWheelChanged -= pointerWheelChangedHandler;
+	}
+	m_corePointerHandlersRegistered = false;
+
+	m_mouseInputRegistered = false;
+	m_mouseCaptureSuspended = false;
+}
+
+void StreamPage::CaptureMouseInput()
+{
+	if (m_mouseCaptureSuspended) return;
+
+	auto window = CoreWindow::GetForCurrentThread();
+	if (window == nullptr) return;
+
+	if (!m_mouseCursorHidden) {
+		window->PointerCursor = nullptr;
+		m_mouseCursorHidden = true;
+	}
+
+	if (!m_mouseCaptureActive) {
+		window->SetPointerCapture();
+		m_mouseCaptureActive = true;
+	}
+}
+
+void StreamPage::ReleaseMouseInputCapture()
+{
+	ReleaseMouseButtons();
+
+	auto window = CoreWindow::GetForCurrentThread();
+	if (window == nullptr) {
+		m_mouseCaptureActive = false;
+		m_mouseCursorHidden = false;
+		return;
+	}
+
+	if (m_mouseCaptureActive) {
+		window->ReleasePointerCapture();
+		m_mouseCaptureActive = false;
+	}
+
+	if (m_mouseCursorHidden) {
+		window->PointerCursor = ref new CoreCursor(CoreCursorType::Arrow, 0);
+		m_mouseCursorHidden = false;
+	}
+}
+
+bool StreamPage::IsMousePointer(PointerPoint^ point)
+{
+	return point != nullptr &&
+	       point->PointerDevice != nullptr &&
+	       point->PointerDevice->PointerDeviceType == Windows::Devices::Input::PointerDeviceType::Mouse;
+}
+
+unsigned int StreamPage::GetMouseButtonMask(PointerPoint^ point)
+{
+	if (point == nullptr || point->Properties == nullptr) return 0;
+
+	unsigned int mask = 0;
+	auto properties = point->Properties;
+	if (properties->IsLeftButtonPressed) mask |= MouseButtonLeftMask;
+	if (properties->IsMiddleButtonPressed) mask |= MouseButtonMiddleMask;
+	if (properties->IsRightButtonPressed) mask |= MouseButtonRightMask;
+	if (properties->IsXButton1Pressed) mask |= MouseButtonX1Mask;
+	if (properties->IsXButton2Pressed) mask |= MouseButtonX2Mask;
+	return mask;
+}
+
+void StreamPage::UpdateMouseButtonState(PointerPoint^ point)
+{
+	unsigned int nextButtons = GetMouseButtonMask(point);
+	unsigned int changedButtons = m_mouseButtons ^ nextButtons;
+
+	if (m_main != nullptr) {
+		if ((changedButtons & MouseButtonLeftMask) != 0) {
+			(nextButtons & MouseButtonLeftMask) != 0 ? m_main->OnMouseButtonDown(BUTTON_LEFT) : m_main->OnMouseButtonUp(BUTTON_LEFT);
+		}
+		if ((changedButtons & MouseButtonMiddleMask) != 0) {
+			(nextButtons & MouseButtonMiddleMask) != 0 ? m_main->OnMouseButtonDown(BUTTON_MIDDLE) : m_main->OnMouseButtonUp(BUTTON_MIDDLE);
+		}
+		if ((changedButtons & MouseButtonRightMask) != 0) {
+			(nextButtons & MouseButtonRightMask) != 0 ? m_main->OnMouseButtonDown(BUTTON_RIGHT) : m_main->OnMouseButtonUp(BUTTON_RIGHT);
+		}
+		if ((changedButtons & MouseButtonX1Mask) != 0) {
+			(nextButtons & MouseButtonX1Mask) != 0 ? m_main->OnMouseButtonDown(BUTTON_X1) : m_main->OnMouseButtonUp(BUTTON_X1);
+		}
+		if ((changedButtons & MouseButtonX2Mask) != 0) {
+			(nextButtons & MouseButtonX2Mask) != 0 ? m_main->OnMouseButtonDown(BUTTON_X2) : m_main->OnMouseButtonUp(BUTTON_X2);
+		}
+	}
+
+	m_mouseButtons = nextButtons;
+}
+
+void StreamPage::ReleaseMouseButtons()
+{
+	if (m_main != nullptr) {
+		if ((m_mouseButtons & MouseButtonLeftMask) != 0) m_main->OnMouseButtonUp(BUTTON_LEFT);
+		if ((m_mouseButtons & MouseButtonMiddleMask) != 0) m_main->OnMouseButtonUp(BUTTON_MIDDLE);
+		if ((m_mouseButtons & MouseButtonRightMask) != 0) m_main->OnMouseButtonUp(BUTTON_RIGHT);
+		if ((m_mouseButtons & MouseButtonX1Mask) != 0) m_main->OnMouseButtonUp(BUTTON_X1);
+		if ((m_mouseButtons & MouseButtonX2Mask) != 0) m_main->OnMouseButtonUp(BUTTON_X2);
+	}
+
+	m_mouseButtons = 0;
+}
+
+void StreamPage::OnMouseMoved(MouseDevice^ sender, MouseEventArgs^ args)
+{
+	if (m_main == nullptr || args == nullptr || m_mouseCaptureSuspended) return;
+
+	auto delta = args->MouseDelta;
+	if (delta.X == 0 && delta.Y == 0) return;
+
+	CaptureMouseInput();
+	m_main->OnMouseMove(delta.X, delta.Y);
+}
+
+bool StreamPage::HandlePointerMoved(PointerPoint^ point)
+{
+	if (m_main == nullptr || m_mouseCaptureSuspended || !IsMousePointer(point)) return false;
+
+	CaptureMouseInput();
+	UpdateMouseButtonState(point);
+	return true;
+}
+
+bool StreamPage::HandlePointerPressed(PointerPoint^ point)
+{
+	if (m_main == nullptr || m_mouseCaptureSuspended || !IsMousePointer(point)) return false;
+
+	CaptureMouseInput();
+	UpdateMouseButtonState(point);
+	return true;
+}
+
+bool StreamPage::HandlePointerReleased(PointerPoint^ point)
+{
+	if (m_main == nullptr || m_mouseCaptureSuspended || !IsMousePointer(point)) return false;
+
+	CaptureMouseInput();
+	UpdateMouseButtonState(point);
+	return true;
+}
+
+bool StreamPage::HandlePointerExited(PointerPoint^ point)
+{
+	if (m_main == nullptr || m_mouseCaptureSuspended || !IsMousePointer(point)) return false;
+
+	CaptureMouseInput();
+	return true;
+}
+
+bool StreamPage::HandlePointerCaptureLost(PointerPoint^ point)
+{
+	if (m_mouseCaptureSuspended || !IsMousePointer(point)) return false;
+
+	m_mouseCaptureActive = false;
+	ReleaseMouseButtons();
+	if (m_mouseCursorHidden) {
+		auto window = CoreWindow::GetForCurrentThread();
+		if (window != nullptr) {
+			window->PointerCursor = ref new CoreCursor(CoreCursorType::Arrow, 0);
+		}
+		m_mouseCursorHidden = false;
+	}
+	return true;
+}
+
+bool StreamPage::HandlePointerWheelChanged(PointerPoint^ point)
+{
+	if (m_mouseCaptureSuspended || !IsMousePointer(point) || m_main == nullptr) return false;
+
+	int delta = point->Properties->MouseWheelDelta;
+	if (delta == 0) return false;
+
+	CaptureMouseInput();
+	m_main->OnMouseWheel(delta, point->Properties->IsHorizontalMouseWheel);
+	return true;
+}
 
 void StreamPage::flyoutButton_Click(Platform::Object^ sender, Windows::UI::Xaml::RoutedEventArgs^ e)
 {
+	m_mouseCaptureSuspended = true;
+	ReleaseMouseInputCapture();
 	Windows::UI::Xaml::Controls::Flyout::ShowAttachedFlyout((FrameworkElement^)sender);
-	m_main->SetFlyoutOpened(true);
+	if (m_main != nullptr) m_main->SetFlyoutOpened(true);
 }
 
 
 void StreamPage::ActionsFlyout_Closed(Platform::Object^ sender, Platform::Object^ e)
 {
 	if(m_main != nullptr) m_main->SetFlyoutOpened(false);
+	m_mouseCaptureSuspended = false;
+	CaptureMouseInput();
 }
 
 void StreamPage::toggleMouseButton_Click(Platform::Object^ sender, Windows::UI::Xaml::RoutedEventArgs^ e)
@@ -217,6 +483,7 @@ void StreamPage::OnNavigatedTo(Windows::UI::Xaml::Navigation::NavigationEventArg
 
 void StreamPage::disonnectButton_Click(Platform::Object^ sender, Windows::UI::Xaml::RoutedEventArgs^ e)
 {
+	ReleaseMouseInputCapture();
 	Windows::UI::Core::CoreWindow::GetForCurrentThread()->KeyDown -= keyDownHandler;
 	Windows::UI::Core::CoreWindow::GetForCurrentThread()->KeyUp -= keyUpHandler;
 
@@ -253,6 +520,7 @@ void StreamPage::OnKeyUp(Windows::UI::Core::CoreWindow^ sender, Windows::UI::Cor
 }
 
 void StreamPage::disconnectAndCloseButton_Click(Platform::Object ^ sender, Windows::UI::Xaml::RoutedEventArgs ^ e) {
+	ReleaseMouseInputCapture();
 	Windows::UI::Core::CoreWindow::GetForCurrentThread()->KeyDown -= keyDownHandler;
 	Windows::UI::Core::CoreWindow::GetForCurrentThread()->KeyUp -= keyUpHandler;
 	if (this->m_main) {

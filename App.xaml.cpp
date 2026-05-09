@@ -79,13 +79,28 @@ void App::OnLaunched(Windows::ApplicationModel::Activation::LaunchActivatedEvent
 	{
 		m_menuPage = dynamic_cast<HostSelectorPage^>(rootFrame->Content);
 	}
-	// Ensure the current window is active
+	// Certifique-se de que a janela está ativa
 	Window::Current->Activate();
-	//Start the state
+
+	// --- CÓDIGO PARA FULL SCREEN ---
+	auto view = Windows::UI::ViewManagement::ApplicationView::GetForCurrentView();
+	if (view != nullptr) {
+		// Tenta colocar em modo Full Screen
+		view->TryEnterFullScreenMode();
+
+		// Opcional: Configurar para que o comportamento seja "HideDisplayBar"
+		// para esconder a barra de título e interações de borda
+		view->FullScreenSystemOverlayMode = Windows::UI::ViewManagement::FullScreenSystemOverlayMode::Minimal;
+	}
+	// -------------------------------
+
+	// Prossegue com o carregamento do estado
 	auto state = GetApplicationState();
 	auto that = this;
-	state->Init().then([that](){
-		that->m_menuPage->OnStateLoaded();
+	state->Init().then([that]() {
+		if (that->m_menuPage != nullptr) {
+			that->m_menuPage->OnStateLoaded();
+		}
 	});
 	displayRequest->RequestActive();
 }

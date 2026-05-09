@@ -2,7 +2,6 @@
 #include "DeviceResources.h"
 #include "DirectXHelper.h"
 #include <windows.ui.xaml.media.dxinterop.h>
-#include <winrt/Windows.UI.Core.h>
 #include <Pages/StreamPage.xaml.h>
 #include <Streaming/FFmpegDecoder.h>
 #include <Plot/ImGuiPlots.h>
